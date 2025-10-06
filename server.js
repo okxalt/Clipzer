@@ -6,6 +6,7 @@ const cors = require('cors');
 const axios = require('axios');
 const FormData = require('form-data');
 const Groq = require('groq-sdk');
+const { spawn } = require('child_process');
 require('dotenv').config();
 
 const app = express();
@@ -237,6 +238,82 @@ Requirements:
   }
 }
 
+// Generate viral clip using Python script
+async function generateViralClip(videoPath, transcript, startTime, endTime, hookTitle, outputDir) {
+  return new Promise((resolve, reject) => {
+    try {
+      console.log(`Generating viral clip: ${startTime}s - ${endTime}s`);
+      console.log(`Hook title: ${hookTitle}`);
+      
+      // Prepare transcript JSON
+      const transcriptJson = JSON.stringify(transcript);
+      
+      // Output path
+      const outputPath = path.join(outputDir, `viral_clip_${Date.now()}.mp4`);
+      
+      // Python script path
+      const pythonScript = path.join(__dirname, 'generate_viral_clip.py');
+      
+      // Check if Python script exists
+      if (!fs.existsSync(pythonScript)) {
+        throw new Error('Python script not found: generate_viral_clip.py');
+      }
+      
+      // Check if video file exists
+      if (!fs.existsSync(videoPath)) {
+        throw new Error(`Video file not found: ${videoPath}`);
+      }
+      
+      // Spawn Python process
+      const pythonProcess = spawn('python3', [
+        pythonScript,
+        videoPath,
+        transcriptJson,
+        startTime.toString(),
+        endTime.toString(),
+        hookTitle,
+        '--output', outputPath
+      ]);
+      
+      let stdout = '';
+      let stderr = '';
+      
+      pythonProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+        console.log(`Python stdout: ${data.toString().trim()}`);
+      });
+      
+      pythonProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+        console.error(`Python stderr: ${data.toString().trim()}`);
+      });
+      
+      pythonProcess.on('close', (code) => {
+        if (code === 0) {
+          console.log('Viral clip generated successfully');
+          resolve({
+            success: true,
+            outputPath: outputPath,
+            message: 'Viral clip generated successfully'
+          });
+        } else {
+          console.error(`Python process exited with code ${code}`);
+          reject(new Error(`Video generation failed: ${stderr || stdout}`));
+        }
+      });
+      
+      pythonProcess.on('error', (error) => {
+        console.error('Python process error:', error);
+        reject(new Error(`Failed to start Python process: ${error.message}`));
+      });
+      
+    } catch (error) {
+      console.error('Error in generateViralClip:', error.message);
+      reject(error);
+    }
+  });
+}
+
 // Process video endpoint
 app.post('/process-video', async (req, res) => {
   try {
@@ -451,6 +528,58 @@ app.post('/find-viral-clips', async (req, res) => {
   }
 });
 
+// Generate viral clip endpoint
+app.post('/generate-viral-clip', async (req, res) => {
+  try {
+    const { videoPath, transcript, startTime, endTime, hookTitle } = req.body;
+    
+    if (!videoPath || !transcript || startTime === undefined || endTime === undefined || !hookTitle) {
+      return res.status(400).json({
+        error: 'Missing required parameters',
+        message: 'Please provide videoPath, transcript, startTime, endTime, and hookTitle'
+      });
+    }
+
+    console.log(`Generating viral clip: ${startTime}s - ${endTime}s`);
+    console.log(`Hook title: ${hookTitle}`);
+    
+    // Generate the viral clip
+    const result = await generateViralClip(
+      videoPath,
+      transcript,
+      startTime,
+      endTime,
+      hookTitle,
+      tempDir
+    );
+    
+    // Get file stats
+    const stats = fs.statSync(result.outputPath);
+    
+    res.json({
+      success: true,
+      message: 'Viral clip generated successfully',
+      clip: {
+        path: result.outputPath,
+        filename: path.basename(result.outputPath),
+        size: stats.size,
+        sizeFormatted: `${(stats.size / 1024 / 1024).toFixed(2)} MB`,
+        duration: endTime - startTime,
+        startTime: startTime,
+        endTime: endTime,
+        hookTitle: hookTitle
+      }
+    });
+
+  } catch (error) {
+    console.error('Error generating viral clip:', error.message);
+    res.status(500).json({
+      error: 'Failed to generate viral clip',
+      message: error.message
+    });
+  }
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ 
@@ -461,11 +590,13 @@ app.get('/health', (req, res) => {
       videoDownload: true,
       audioDownload: true,
       transcription: !!HUGGINGFACE_API_KEY,
-      viralClipsAnalysis: !!GROQ_API_KEY
+      viralClipsAnalysis: !!GROQ_API_KEY,
+      viralClipGeneration: true
     },
     apis: {
       huggingFace: !!HUGGINGFACE_API_KEY,
-      groq: !!GROQ_API_KEY
+      groq: !!GROQ_API_KEY,
+      python: true
     }
   });
 });
@@ -478,6 +609,7 @@ app.get('/', (req, res) => {
       'POST /process-video': 'Download YouTube video, audio, transcribe, and find viral clips',
       'POST /transcribe': 'Transcribe existing audio file',
       'POST /find-viral-clips': 'Analyze transcript for viral video segments',
+      'POST /generate-viral-clip': 'Generate TikTok-style viral video clip',
       'GET /health': 'Health check'
     },
     usage: {
@@ -504,6 +636,20 @@ app.get('/', (req, res) => {
             words: [{'word': 'hello', 'start': 0.5, 'end': 0.8}]
           }
         }
+      },
+      generateViralClip: {
+        method: 'POST',
+        url: '/generate-viral-clip',
+        body: {
+          videoPath: '/path/to/video.mp4',
+          transcript: {
+            text: 'transcript text...',
+            words: [{'word': 'hello', 'start': 0.5, 'end': 0.8}]
+          },
+          startTime: 15.5,
+          endTime: 45.2,
+          hookTitle: 'This Will Shock You!'
+        }
       }
     },
     features: {
@@ -511,8 +657,11 @@ app.get('/', (req, res) => {
       audioDownload: 'WAV format',
       transcription: 'OpenAI Whisper via Hugging Face API',
       viralClipsAnalysis: 'AI-powered viral segment identification',
+      viralClipGeneration: 'TikTok-style vertical video clips with captions',
       wordTimestamps: 'Word-level timing information',
-      viralityScoring: '1-100 virality scores with reasoning'
+      viralityScoring: '1-100 virality scores with reasoning',
+      animatedCaptions: 'Word-by-word highlighting with emojis',
+      verticalFormat: '9:16 aspect ratio for mobile viewing'
     },
     environmentVariables: {
       HUGGINGFACE_API_KEY: 'Required for transcription',

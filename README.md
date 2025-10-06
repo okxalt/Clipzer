@@ -1,6 +1,6 @@
-# YouTube Downloader Server with AI Analysis
+# YouTube Downloader Server with AI Analysis & Viral Clip Generation
 
-A Node.js Express server that downloads YouTube videos and audio using `yt-dlp-exec`, transcribes audio using OpenAI Whisper via Hugging Face API, and identifies viral video segments using Groq's Llama 3 8B model.
+A Node.js Express server that downloads YouTube videos and audio using `yt-dlp-exec`, transcribes audio using OpenAI Whisper via Hugging Face API, identifies viral video segments using Groq's Llama 3 8B model, and generates TikTok-style vertical video clips with animated captions.
 
 ## Features
 
@@ -8,11 +8,15 @@ A Node.js Express server that downloads YouTube videos and audio using `yt-dlp-e
 - Download audio as WAV format
 - AI-powered audio transcription with word-level timestamps
 - AI-powered viral clips analysis with virality scoring
+- **NEW:** TikTok-style viral clip generation with animated captions
+- 9:16 vertical format optimized for mobile viewing
+- Word-by-word highlighting with emoji integration
+- Hook title overlays and zoom effects
 - Store files in temporary directory
 - Comprehensive error handling
 - File size reporting
 - Health check endpoint
-- Separate endpoints for transcription and viral clips analysis
+- Separate endpoints for all features
 
 ## Installation
 
@@ -33,7 +37,12 @@ brew install yt-dlp
 pip install yt-dlp
 ```
 
-3. Set up environment variables:
+3. Install Python dependencies for video generation:
+```bash
+pip install -r requirements.txt
+```
+
+4. Set up environment variables:
 ```bash
 # Copy the example file
 cp .env.example .env
@@ -72,6 +81,14 @@ curl -X POST http://localhost:3000/transcribe \
 curl -X POST http://localhost:3000/find-viral-clips \
   -H "Content-Type: application/json" \
   -d '{"transcript": {"text": "transcript text...", "words": [{"word": "hello", "start": 0.5, "end": 0.8}]}}'
+```
+
+5. Or generate a viral video clip:
+
+```bash
+curl -X POST http://localhost:3000/generate-viral-clip \
+  -H "Content-Type: application/json" \
+  -d '{"videoPath": "/path/to/video.mp4", "transcript": {"text": "...", "words": [...]}, "startTime": 15.5, "endTime": 45.2, "hookTitle": "This Will Shock You!"}'
 ```
 
 ## API Endpoints
@@ -221,6 +238,55 @@ Analyzes a transcript to identify viral video segments.
   }
 }
 ```
+
+### POST /generate-viral-clip
+Generates a TikTok-style vertical video clip with animated captions.
+
+**Request Body:**
+```json
+{
+  "videoPath": "/path/to/video.mp4",
+  "transcript": {
+    "text": "Full transcript text...",
+    "words": [
+      {
+        "word": "Hello",
+        "start": 0.5,
+        "end": 0.8
+      }
+    ]
+  },
+  "startTime": 15.5,
+  "endTime": 45.2,
+  "hookTitle": "This Will Shock You!"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Viral clip generated successfully",
+  "clip": {
+    "path": "/path/to/viral_clip_1234567890.mp4",
+    "filename": "viral_clip_1234567890.mp4",
+    "size": 12345678,
+    "sizeFormatted": "11.77 MB",
+    "duration": 29.7,
+    "startTime": 15.5,
+    "endTime": 45.2,
+    "hookTitle": "This Will Shock You!"
+  }
+}
+```
+
+**Features:**
+- 9:16 vertical aspect ratio (TikTok format)
+- Animated captions with word-by-word highlighting
+- Emoji integration based on word content
+- Hook title overlay at the top
+- Slow zoom-in effect
+- Optimized for mobile viewing
 
 ### GET /health
 Health check endpoint.
