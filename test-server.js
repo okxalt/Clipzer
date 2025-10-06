@@ -15,7 +15,7 @@ function testServer() {
       const response = JSON.parse(data);
       console.log('Health check response:', response);
       if (response.features) {
-        console.log(`Features available: Video=${response.features.videoDownload}, Audio=${response.features.audioDownload}, Transcription=${response.features.transcription}`);
+        console.log(`Features available: Video=${response.features.videoDownload}, Audio=${response.features.audioDownload}, Transcription=${response.features.transcription}, ViralClips=${response.features.viralClipsAnalysis}`);
       }
       testRootEndpoint();
     });
@@ -114,7 +114,11 @@ function testTranscribeEndpoint() {
       console.log('curl -X POST http://localhost:3000/transcribe \\');
       console.log('  -H "Content-Type: application/json" \\');
       console.log('  -d \'{"audioPath": "/path/to/audio.wav"}\'');
-      console.log('\nNote: Make sure to set HUGGINGFACE_API_KEY environment variable for transcription to work.');
+      console.log('\nTo test viral clips analysis, use:');
+      console.log('curl -X POST http://localhost:3000/find-viral-clips \\');
+      console.log('  -H "Content-Type: application/json" \\');
+      console.log('  -d \'{"transcript": {"text": "transcript text...", "words": [{"word": "hello", "start": 0.5, "end": 0.8}]}}\'');
+      console.log('\nNote: Make sure to set HUGGINGFACE_API_KEY and GROQ_API_KEY environment variables for full functionality.');
     });
   });
   

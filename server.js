@@ -5,6 +5,7 @@ const fs = require('fs');
 const cors = require('cors');
 const axios = require('axios');
 const FormData = require('form-data');
+const Groq = require('groq-sdk');
 require('dotenv').config();
 
 const app = express();
@@ -25,6 +26,15 @@ if (!fs.existsSync(tempDir)) {
 const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
 const HUGGINGFACE_MODEL = process.env.HUGGINGFACE_MODEL || 'openai/whisper-large-v3';
 const HUGGINGFACE_API_URL = process.env.HUGGINGFACE_API_URL || 'https://api-inference.huggingface.co';
+
+// Groq API configuration
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama3-8b-8192';
+
+// Initialize Groq client
+const groq = new Groq({
+  apiKey: GROQ_API_KEY,
+});
 
 // Transcribe audio using Hugging Face Whisper API
 async function transcribeAudio(audioPath) {
@@ -101,6 +111,132 @@ async function transcribeAudio(audioPath) {
   }
 }
 
+// Find viral clips using Groq API
+async function findViralClips(transcript) {
+  try {
+    if (!GROQ_API_KEY) {
+      throw new Error('GROQ_API_KEY environment variable is not set');
+    }
+
+    if (!transcript || !transcript.text) {
+      throw new Error('Invalid transcript data provided');
+    }
+
+    console.log('Analyzing transcript for viral clips...');
+    
+    // Format the transcript with word-level timestamps for the AI
+    let formattedTranscript = '';
+    
+    if (transcript.words && transcript.words.length > 0) {
+      // Use word-level timestamps if available
+      formattedTranscript = transcript.words.map(word => 
+        `[${word.start.toFixed(2)}s-${word.end.toFixed(2)}s] ${word.word}`
+      ).join(' ');
+    } else if (transcript.chunks && transcript.chunks.length > 0) {
+      // Use chunk-level timestamps if available
+      formattedTranscript = transcript.chunks.map(chunk => 
+        `[${chunk.timestamp[0].toFixed(2)}s-${chunk.timestamp[1].toFixed(2)}s] ${chunk.text}`
+      ).join(' ');
+    } else {
+      // Fallback to just the text
+      formattedTranscript = transcript.text;
+    }
+
+    const prompt = `You are a viral video expert. Analyze this transcript which includes word-level timestamps. Identify up to 7 segments between 30 and 60 seconds long that are perfect for a TikTok video. For each segment, provide a JSON object with: start_time, end_time, a virality_score from 1 to 100, a reasoning for why it's viral, and a short, punchy hook_title under 10 words. Respond ONLY with a JSON array of these objects.
+
+Transcript:
+${formattedTranscript}
+
+Requirements:
+- Each segment must be 30-60 seconds long
+- Virality score should be 1-100 based on engagement potential
+- Reasoning should explain why it would go viral
+- Hook title should be under 10 words and attention-grabbing
+- Return ONLY a valid JSON array, no other text`;
+
+    const completion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      model: GROQ_MODEL,
+      temperature: 0.7,
+      max_tokens: 2000,
+    });
+
+    const responseText = completion.choices[0]?.message?.content;
+    
+    if (!responseText) {
+      throw new Error('No response received from Groq API');
+    }
+
+    console.log('Raw Groq response:', responseText);
+
+    // Try to parse the JSON response
+    let viralClips;
+    try {
+      // Clean the response to extract JSON
+      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+      const jsonString = jsonMatch ? jsonMatch[0] : responseText;
+      viralClips = JSON.parse(jsonString);
+    } catch (parseError) {
+      console.error('Failed to parse JSON response:', parseError);
+      console.error('Raw response:', responseText);
+      throw new Error('Failed to parse viral clips response as JSON');
+    }
+
+    // Validate the response structure
+    if (!Array.isArray(viralClips)) {
+      throw new Error('Response is not an array');
+    }
+
+    // Validate each clip has required fields
+    const validatedClips = viralClips.map((clip, index) => {
+      if (!clip.start_time || !clip.end_time || !clip.virality_score || !clip.reasoning || !clip.hook_title) {
+        console.warn(`Clip ${index} missing required fields:`, clip);
+      }
+      
+      return {
+        start_time: parseFloat(clip.start_time) || 0,
+        end_time: parseFloat(clip.end_time) || 0,
+        virality_score: parseInt(clip.virality_score) || 0,
+        reasoning: clip.reasoning || 'No reasoning provided',
+        hook_title: clip.hook_title || 'Untitled',
+        duration: (parseFloat(clip.end_time) || 0) - (parseFloat(clip.start_time) || 0)
+      };
+    });
+
+    // Sort by virality score (highest first)
+    validatedClips.sort((a, b) => b.virality_score - a.virality_score);
+
+    console.log(`Found ${validatedClips.length} viral clips`);
+    console.log('Top clip:', validatedClips[0]);
+
+    return {
+      success: true,
+      clips: validatedClips,
+      total_clips: validatedClips.length,
+      analysis_model: GROQ_MODEL
+    };
+
+  } catch (error) {
+    console.error('Error finding viral clips:', error.message);
+    
+    // Handle specific API errors
+    if (error.message.includes('API key')) {
+      throw new Error('Invalid Groq API key');
+    } else if (error.message.includes('rate limit')) {
+      throw new Error('Groq API rate limit exceeded. Please try again later');
+    } else if (error.message.includes('quota')) {
+      throw new Error('Groq API quota exceeded. Please check your usage limits');
+    }
+    
+    throw error;
+  }
+}
+
 // Process video endpoint
 app.post('/process-video', async (req, res) => {
   try {
@@ -171,6 +307,19 @@ app.post('/process-video', async (req, res) => {
       // Continue without transcription rather than failing the entire request
     }
 
+    // Find viral clips if transcription is available
+    let viralClips = null;
+    if (transcription && transcription.success) {
+      try {
+        console.log('Analyzing transcript for viral clips...');
+        viralClips = await findViralClips(transcription);
+        console.log('Viral clips analysis completed successfully');
+      } catch (viralClipsError) {
+        console.warn('Viral clips analysis failed:', viralClipsError.message);
+        // Continue without viral clips analysis rather than failing the entire request
+      }
+    }
+
     const response = {
       success: true,
       message: 'Video and audio downloaded successfully',
@@ -199,6 +348,17 @@ app.post('/process-video', async (req, res) => {
       response.transcription = {
         success: false,
         error: 'Transcription failed - check server logs for details'
+      };
+    }
+
+    // Add viral clips data if available
+    if (viralClips) {
+      response.viral_clips = viralClips;
+      response.message += ' and viral clips identified';
+    } else {
+      response.viral_clips = {
+        success: false,
+        error: 'Viral clips analysis failed - check server logs for details'
       };
     }
 
@@ -260,16 +420,52 @@ app.post('/transcribe', async (req, res) => {
   }
 });
 
+// Find viral clips endpoint
+app.post('/find-viral-clips', async (req, res) => {
+  try {
+    const { transcript } = req.body;
+    
+    if (!transcript) {
+      return res.status(400).json({
+        error: 'Transcript is required',
+        message: 'Please provide transcript data in the request body'
+      });
+    }
+
+    console.log('Analyzing transcript for viral clips...');
+    
+    const viralClips = await findViralClips(transcript);
+    
+    res.json({
+      success: true,
+      message: 'Viral clips analysis completed successfully',
+      viral_clips: viralClips
+    });
+
+  } catch (error) {
+    console.error('Error finding viral clips:', error.message);
+    res.status(500).json({
+      error: 'Failed to analyze viral clips',
+      message: error.message
+    });
+  }
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
-    message: 'YouTube downloader server is running',
+    message: 'YouTube downloader server with AI analysis is running',
     timestamp: new Date().toISOString(),
     features: {
       videoDownload: true,
       audioDownload: true,
-      transcription: !!HUGGINGFACE_API_KEY
+      transcription: !!HUGGINGFACE_API_KEY,
+      viralClipsAnalysis: !!GROQ_API_KEY
+    },
+    apis: {
+      huggingFace: !!HUGGINGFACE_API_KEY,
+      groq: !!GROQ_API_KEY
     }
   });
 });
@@ -277,10 +473,11 @@ app.get('/health', (req, res) => {
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
-    message: 'YouTube Downloader Server with AI Transcription',
+    message: 'YouTube Downloader Server with AI Analysis',
     endpoints: {
-      'POST /process-video': 'Download YouTube video, audio, and transcribe',
+      'POST /process-video': 'Download YouTube video, audio, transcribe, and find viral clips',
       'POST /transcribe': 'Transcribe existing audio file',
+      'POST /find-viral-clips': 'Analyze transcript for viral video segments',
       'GET /health': 'Health check'
     },
     usage: {
@@ -297,18 +494,32 @@ app.get('/', (req, res) => {
         body: {
           audioPath: '/path/to/audio.wav'
         }
+      },
+      findViralClips: {
+        method: 'POST',
+        url: '/find-viral-clips',
+        body: {
+          transcript: {
+            text: 'transcript text...',
+            words: [{'word': 'hello', 'start': 0.5, 'end': 0.8}]
+          }
+        }
       }
     },
     features: {
       videoDownload: 'Best quality up to 1080p',
       audioDownload: 'WAV format',
       transcription: 'OpenAI Whisper via Hugging Face API',
-      wordTimestamps: 'Word-level timing information'
+      viralClipsAnalysis: 'AI-powered viral segment identification',
+      wordTimestamps: 'Word-level timing information',
+      viralityScoring: '1-100 virality scores with reasoning'
     },
     environmentVariables: {
       HUGGINGFACE_API_KEY: 'Required for transcription',
       HUGGINGFACE_MODEL: 'Optional (default: openai/whisper-large-v3)',
-      HUGGINGFACE_API_URL: 'Optional (default: https://api-inference.huggingface.co)'
+      HUGGINGFACE_API_URL: 'Optional (default: https://api-inference.huggingface.co)',
+      GROQ_API_KEY: 'Required for viral clips analysis',
+      GROQ_MODEL: 'Optional (default: llama3-8b-8192)'
     }
   });
 });

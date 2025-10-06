@@ -1,17 +1,18 @@
-# YouTube Downloader Server with AI Transcription
+# YouTube Downloader Server with AI Analysis
 
-A Node.js Express server that downloads YouTube videos and audio using `yt-dlp-exec` and transcribes audio using OpenAI Whisper via Hugging Face API.
+A Node.js Express server that downloads YouTube videos and audio using `yt-dlp-exec`, transcribes audio using OpenAI Whisper via Hugging Face API, and identifies viral video segments using Groq's Llama 3 8B model.
 
 ## Features
 
 - Download best quality video (up to 1080p)
 - Download audio as WAV format
 - AI-powered audio transcription with word-level timestamps
+- AI-powered viral clips analysis with virality scoring
 - Store files in temporary directory
 - Comprehensive error handling
 - File size reporting
 - Health check endpoint
-- Separate transcription endpoint for existing audio files
+- Separate endpoints for transcription and viral clips analysis
 
 ## Installation
 
@@ -37,8 +38,9 @@ pip install yt-dlp
 # Copy the example file
 cp .env.example .env
 
-# Edit .env and add your Hugging Face API key
+# Edit .env and add your API keys
 HUGGINGFACE_API_KEY=your_huggingface_api_key_here
+GROQ_API_KEY=your_groq_api_key_here
 ```
 
 ## Usage
@@ -64,10 +66,18 @@ curl -X POST http://localhost:3000/transcribe \
   -d '{"audioPath": "/path/to/audio.wav"}'
 ```
 
+4. Or analyze transcript for viral clips:
+
+```bash
+curl -X POST http://localhost:3000/find-viral-clips \
+  -H "Content-Type: application/json" \
+  -d '{"transcript": {"text": "transcript text...", "words": [{"word": "hello", "start": 0.5, "end": 0.8}]}}'
+```
+
 ## API Endpoints
 
 ### POST /process-video
-Downloads a YouTube video, its audio, and transcribes the audio.
+Downloads a YouTube video, its audio, transcribes the audio, and identifies viral clips.
 
 **Request Body:**
 ```json
@@ -114,6 +124,21 @@ Downloads a YouTube video, its audio, and transcribes the audio.
     "language": "en",
     "duration": 120.5
   },
+  "viral_clips": {
+    "success": true,
+    "clips": [
+      {
+        "start_time": 15.5,
+        "end_time": 45.2,
+        "virality_score": 85,
+        "reasoning": "High energy moment with clear hook and emotional appeal",
+        "hook_title": "This Will Shock You!",
+        "duration": 29.7
+      }
+    ],
+    "total_clips": 5,
+    "analysis_model": "llama3-8b-8192"
+  },
   "downloadDir": "/path/to/download/directory"
 }
 ```
@@ -151,6 +176,48 @@ Transcribes an existing audio file.
     ],
     "language": "en",
     "duration": 120.5
+  }
+}
+```
+
+### POST /find-viral-clips
+Analyzes a transcript to identify viral video segments.
+
+**Request Body:**
+```json
+{
+  "transcript": {
+    "text": "Full transcript text...",
+    "words": [
+      {
+        "word": "Hello",
+        "start": 0.5,
+        "end": 0.8
+      }
+    ]
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Viral clips analysis completed successfully",
+  "viral_clips": {
+    "success": true,
+    "clips": [
+      {
+        "start_time": 15.5,
+        "end_time": 45.2,
+        "virality_score": 85,
+        "reasoning": "High energy moment with clear hook and emotional appeal",
+        "hook_title": "This Will Shock You!",
+        "duration": 29.7
+      }
+    ],
+    "total_clips": 5,
+    "analysis_model": "llama3-8b-8192"
   }
 }
 ```
